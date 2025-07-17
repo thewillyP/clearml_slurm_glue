@@ -11,7 +11,7 @@ FORCE_REBUILD=${6:-false}
 if [ "$FORCE_REBUILD" = "true" ] || [ ! -f "${IMAGE_PATH}" ]; then
     echo "Force rebuild requested. Building image..."
     singularity build --force "${IMAGE_PATH}" docker://thewillyp/clearml-agent
-    singularity overlay create --size 5120 "${IMAGE_PATH}"
+    singularity overlay create --size 5120 --create-dir /tmp "${IMAGE_PATH}"
 else
     echo "Image found at ${IMAGE_PATH}. Skipping build."
 fi
