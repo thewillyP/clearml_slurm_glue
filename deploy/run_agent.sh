@@ -52,7 +52,7 @@ CLEARML_WEB_HOST=\$(singularity run --cleanenv \\
     ssm get-parameter --name "/dev/research/clearml_web_host" --query Parameter.Value --output text)
 
 # Run ClearML agent with singularity
-singularity exec --cleanenv --containall --no-home \\
+singularity exec --cleanenv --containall --no-home --writable-tmpfs \\
     --env AWS_ACCESS_KEY_ID=${AWS_ACCESS_KEY_ID} \\
     --env AWS_SECRET_ACCESS_KEY=${AWS_SECRET_ACCESS_KEY} \\
     --env AWS_DEFAULT_REGION=us-east-1 \\
