@@ -5,11 +5,12 @@ RUN_CPUS=$2
 RUN_MEM=$3
 LOG_DIR=$4
 IMAGE_PATH=$5
+FORCE_REBUILD=${6:-false}
 
-# Check if image exists, if not build it
-if [ ! -f "${IMAGE_PATH}" ]; then
-    echo "Image not found at ${IMAGE_PATH}. Building image..."
-    singularity build "${IMAGE_PATH}" docker://thewillyp/clearml-agent
+# Check if we should build the image
+if [ "$FORCE_REBUILD" = "true" ] || [ ! -f "${IMAGE_PATH}" ]; then
+    echo "Force rebuild requested. Building image..."
+    singularity build --force "${IMAGE_PATH}" docker://thewillyp/clearml-agent
     singularity overlay create --size 5120 "${IMAGE_PATH}"
 else
     echo "Image found at ${IMAGE_PATH}. Skipping build."
