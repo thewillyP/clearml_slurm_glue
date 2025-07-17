@@ -1,5 +1,4 @@
 #!/bin/bash
-
 # Parse arguments
 RUN_TIME=$1
 RUN_CPUS=$2
@@ -7,9 +6,14 @@ RUN_MEM=$3
 LOG_DIR=$4
 IMAGE_PATH=$5
 
-# Build image and apply overlay
-singularity build --force "${IMAGE_PATH}" docker://thewillyp/clearml-agent
-singularity overlay create --size 5120 "${IMAGE_PATH}"
+# Check if image exists, if not build it
+if [ ! -f "${IMAGE_PATH}" ]; then
+    echo "Image not found at ${IMAGE_PATH}. Building image..."
+    singularity build "${IMAGE_PATH}" docker://thewillyp/clearml-agent
+    singularity overlay create --size 5120 "${IMAGE_PATH}"
+else
+    echo "Image found at ${IMAGE_PATH}. Skipping build."
+fi
 
 # Submit the SLURM job
 sbatch <<EOF
