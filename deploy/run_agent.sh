@@ -5,6 +5,11 @@ RUN_TIME=$1
 RUN_CPUS=$2
 RUN_MEM=$3
 LOG_DIR=$4
+IMAGE_PATH=$5
+
+# Build image and apply overlay
+singularity build --force "${IMAGE_PATH}" docker://thewillyp/clearml-agent
+singularity overlay create --size 5120 "${IMAGE_PATH}"
 
 # Submit the SLURM job
 sbatch <<EOF
@@ -47,7 +52,7 @@ CLEARML_WEB_HOST=\$(singularity run --cleanenv \\
     ssm get-parameter --name "/dev/research/clearml_web_host" --query Parameter.Value --output text)
 
 # Run ClearML agent with singularity
-singularity exec --cleanenv \\
+singularity exec --cleanenv --containall --no-home \\
     --env AWS_ACCESS_KEY_ID=${AWS_ACCESS_KEY_ID} \\
     --env AWS_SECRET_ACCESS_KEY=${AWS_SECRET_ACCESS_KEY} \\
     --env AWS_DEFAULT_REGION=us-east-1 \\
@@ -56,7 +61,7 @@ singularity exec --cleanenv \\
     --env CLEARML_FILES_HOST=\${CLEARML_FILES_HOST} \\
     --env CLEARML_API_ACCESS_KEY=\${CLEARML_API_ACCESS_KEY} \\
     --env CLEARML_API_SECRET_KEY=\${CLEARML_API_SECRET_KEY} \\
-    docker://thewillyp/clearml-agent \\
+    ${IMAGE_PATH} \\
     clearml-agent daemon --queue infrastructure
 
 EOF

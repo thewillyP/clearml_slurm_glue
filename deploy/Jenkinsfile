@@ -3,7 +3,8 @@ properties([
         string(name: 'runTime', defaultValue: '7-00:00:00', description: 'Run job time limit'),
         string(name: 'runCPUs', defaultValue: '4', description: 'CPUs to allocate for run'),
         string(name: 'runMem', defaultValue: '14G', description: 'Memory to allocate for run'),
-        string(name: 'logDir', defaultValue: '/vast/wlp9800/logs', description: 'Log directory path')
+        string(name: 'logDir', defaultValue: '/vast/wlp9800/logs', description: 'Log directory path'),
+        string(name: 'imagePath', defaultValue: '/scratch/wlp9800/images/clearml-agent.sif', description: 'Full path to Singularity image')
     ])
 ])
 
@@ -45,7 +46,7 @@ pipeline {
                             ssh -o StrictHostKeyChecking=no ${env.SSH_USER}@${env.EXEC_HOST} '
                             export AWS_ACCESS_KEY_ID="${AWS_ACCESS_KEY_ID}";
                             export AWS_SECRET_ACCESS_KEY="${AWS_SECRET_ACCESS_KEY}";
-                            bash -s "${params.runTime}" "${params.runCPUs}" "${params.runMem}" "${params.logDir}"
+                            bash -s "${params.runTime}" "${params.runCPUs}" "${params.runMem}" "${params.logDir}" "${params.imagePath}"
                             ' < deploy/run_agent.sh
                         """
                     }
