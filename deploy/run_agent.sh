@@ -57,7 +57,7 @@ CLEARML_WEB_HOST=\$(singularity run --cleanenv \\
     ssm get-parameter --name "/dev/research/clearml_web_host" --query Parameter.Value --output text)
 
 # Run ClearML agent with singularity
-singularity exec --cleanenv --containall --writable \\
+singularity exec --cleanenv --containall --writable-tmpfs \\
     --env AWS_ACCESS_KEY_ID=${AWS_ACCESS_KEY_ID} \\
     --env AWS_SECRET_ACCESS_KEY=${AWS_SECRET_ACCESS_KEY} \\
     --env AWS_DEFAULT_REGION=us-east-1 \\
@@ -66,6 +66,7 @@ singularity exec --cleanenv --containall --writable \\
     --env CLEARML_FILES_HOST=\${CLEARML_FILES_HOST} \\
     --env CLEARML_API_ACCESS_KEY=\${CLEARML_API_ACCESS_KEY} \\
     --env CLEARML_API_SECRET_KEY=\${CLEARML_API_SECRET_KEY} \\
+    --bind /scratch/wlp9800/tmp:/tmp \\
     ${IMAGE_PATH} \\
     clearml-agent daemon --queue infrastructure
 
