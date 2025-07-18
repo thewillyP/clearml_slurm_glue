@@ -7,14 +7,6 @@ LOG_DIR=$4
 SCRATCH_DIR=$5
 FORCE_REBUILD=${6:-false}
 
-# Define static tmp dir and random cache dir
-TMP_DIR="${SCRATCH_DIR}/clearml_agent_tmp"
-CACHE_DIR="${SCRATCH_DIR}/cache_$(uuidgen | tr '[:upper:]' '[:lower:]')"
-
-# Create both directories
-mkdir -p "${TMP_DIR}"
-mkdir -p "${CACHE_DIR}"
-
 IMAGE_PATH="${SCRATCH_DIR}/clearml_agent.sif"
 
 # Check if we should build the image
@@ -76,8 +68,8 @@ singularity exec --cleanenv --containall \\
     --env CLEARML_API_ACCESS_KEY=\${CLEARML_API_ACCESS_KEY} \\
     --env CLEARML_API_SECRET_KEY=\${CLEARML_API_SECRET_KEY} \\
     --env CLEARML_AGENT_FORCE_UV=1 \\
-    --bind ${TMP_DIR}:/tmp \\
-    --bind ${CACHE_DIR}:${HOME} \\
+    --bind \${SLURM_TMPDIR}:/tmp \\
+    --bind \${SLURM_TMPDIR}:\${HOME} \\
     ${IMAGE_PATH} \\
     clearml-agent daemon --queue infrastructure
 
