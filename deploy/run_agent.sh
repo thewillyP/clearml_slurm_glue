@@ -4,8 +4,18 @@ RUN_TIME=$1
 RUN_CPUS=$2
 RUN_MEM=$3
 LOG_DIR=$4
-IMAGE_PATH=$5
+SCRATCH_DIR=$5
 FORCE_REBUILD=${6:-false}
+
+# Define static tmp dir and random cache dir
+TMP_DIR="${SCRATCH_DIR}/clearml_agent_tmp"
+CACHE_DIR="${SCRATCH_DIR}/cache_$(uuidgen | tr '[:upper:]' '[:lower:]')"
+
+# Create both directories
+mkdir -p "${TMP_DIR}"
+mkdir -p "${CACHE_DIR}"
+
+IMAGE_PATH="${SCRATCH_DIR}/clearml_agent.sif"
 
 # Check if we should build the image
 if [ "$FORCE_REBUILD" = "true" ] || [ ! -f "${IMAGE_PATH}" ]; then
@@ -57,7 +67,7 @@ CLEARML_WEB_HOST=\$(singularity run --cleanenv \\
     ssm get-parameter --name "/dev/research/clearml_web_host" --query Parameter.Value --output text)
 
 # Run ClearML agent with singularity
-singularity exec --cleanenv --containall --writable-tmpfs \\
+singularity exec --cleanenv --containall \\
     --env AWS_ACCESS_KEY_ID=${AWS_ACCESS_KEY_ID} \\
     --env AWS_SECRET_ACCESS_KEY=${AWS_SECRET_ACCESS_KEY} \\
     --env AWS_DEFAULT_REGION=us-east-1 \\
@@ -66,7 +76,10 @@ singularity exec --cleanenv --containall --writable-tmpfs \\
     --env CLEARML_FILES_HOST=\${CLEARML_FILES_HOST} \\
     --env CLEARML_API_ACCESS_KEY=\${CLEARML_API_ACCESS_KEY} \\
     --env CLEARML_API_SECRET_KEY=\${CLEARML_API_SECRET_KEY} \\
-    --bind /scratch/wlp9800/tmp:/tmp \\
+    --env CLEARML_AGENT_FORCE_UV=1 \\
+    --env CLEARML_CACHE_DIR=/opt/clearml_cache \\
+    --bind ${TMP_DIR}:/tmp \\
+    --bind ${CACHE_DIR}:/opt/clearml_cache \\
     ${IMAGE_PATH} \\
     clearml-agent daemon --queue infrastructure
 
