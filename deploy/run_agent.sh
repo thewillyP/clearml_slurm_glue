@@ -21,7 +21,6 @@ IMAGE_PATH="${SCRATCH_DIR}/clearml_agent.sif"
 if [ "$FORCE_REBUILD" = "true" ] || [ ! -f "${IMAGE_PATH}" ]; then
     echo "Force rebuild requested. Building image..."
     singularity build --force "${IMAGE_PATH}" docker://thewillyp/clearml-agent
-    singularity overlay create --size 5120 --create-dir /tmp "${IMAGE_PATH}"
 else
     echo "Image found at ${IMAGE_PATH}. Skipping build."
 fi
@@ -77,9 +76,8 @@ singularity exec --cleanenv --containall \\
     --env CLEARML_API_ACCESS_KEY=\${CLEARML_API_ACCESS_KEY} \\
     --env CLEARML_API_SECRET_KEY=\${CLEARML_API_SECRET_KEY} \\
     --env CLEARML_AGENT_FORCE_UV=1 \\
-    --env CLEARML_CACHE_DIR=/opt/clearml_cache \\
     --bind ${TMP_DIR}:/tmp \\
-    --bind ${CACHE_DIR}:/opt/clearml_cache \\
+    --bind ${CACHE_DIR}:${HOME} \\
     ${IMAGE_PATH} \\
     clearml-agent daemon --queue infrastructure
 
