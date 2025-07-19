@@ -148,7 +148,7 @@ gpg --no-default-keyring --keyring $GPG_KEYRING --verify $SIG_FILE $ENTRYPOINT_F
 
 def main(controller_task):
     queue_name = controller_task.get_parameter("slurm/queue_name", default="slurm")
-    poll_interval = float(controller_task.get_parameter("slurm/poll_interval", default=0.5))
+    lazy_poll_interval = float(controller_task.get_parameter("slurm/lazy_poll_interval", default=5.0))
 
     client = APIClient()
 
@@ -166,32 +166,53 @@ def main(controller_task):
 
             if current_jobs >= max_jobs:
                 print(f"[INFO] Max jobs ({max_jobs}) reached, sleeping...")
-                time.sleep(poll_interval)
+                time.sleep(lazy_poll_interval)
                 continue
 
-            print(f"[INFO] Attempting to dequeue task from '{queue_name}'...")
-            response = client.queues.get_next_task(queue=queue_id)
+            # Check how many tasks are in the queue
+            num_entries_response = client.queues.get_num_entries(queue=queue_id)
+            num_entries = num_entries_response.num
 
-            if not response.entry:
-                print("[INFO] No task available, sleeping...")
-                time.sleep(poll_interval)
+            if num_entries == 0:
+                print(f"[INFO] No tasks in queue, lazy polling...")
+                time.sleep(lazy_poll_interval)
                 continue
 
-            task_id = response.entry.task
-            task = Task.get_task(task_id=task_id)
+            print(f"[INFO] Found {num_entries} tasks in queue, fast polling...")
 
-            entry_url = task.get_parameter("slurm/entrypoint_url")
-            log_dir = task.get_parameter("slurm/log_dir")
+            # Fast polling loop - dequeue all available tasks
+            tasks_processed = 0
+            while tasks_processed < num_entries:
+                # Check job limit again
+                current_jobs = get_running_slurm_jobs()
+                if current_jobs >= max_jobs:
+                    print(f"[INFO] Hit max jobs limit during burst, processed {tasks_processed}/{num_entries}")
+                    break
 
-            singularity_cmd = build_singularity_command(task)
-            sbatch_script = create_sbatch_script(task, task_id, entry_url, singularity_cmd, log_dir)
+                print(f"[INFO] Attempting to dequeue task from '{queue_name}'...")
+                response = client.queues.get_next_task(queue=queue_id)
 
-            print(f"[INFO] Submitting SLURM job for task {task_id}")
-            subprocess.run(["ssh", HOSTNAME, "sbatch"], input=sbatch_script, text=True)
+                if not response.entry:
+                    print(f"[INFO] No more tasks available, processed {tasks_processed}/{num_entries}")
+                    break
+
+                task_id = response.entry.task
+                task = Task.get_task(task_id=task_id)
+
+                entry_url = task.get_parameter("slurm/entrypoint_url")
+                log_dir = task.get_parameter("slurm/log_dir")
+
+                singularity_cmd = build_singularity_command(task)
+                sbatch_script = create_sbatch_script(task, task_id, entry_url, singularity_cmd, log_dir)
+
+                print(f"[INFO] Submitting SLURM job for task {task_id}")
+                subprocess.run(["ssh", HOSTNAME, "sbatch"], input=sbatch_script, text=True)
+
+                tasks_processed += 1
 
         except Exception as e:
             print(f"[ERROR] {e}")
-        time.sleep(poll_interval)
+        time.sleep(lazy_poll_interval)
 
 
 if __name__ == "__main__":
