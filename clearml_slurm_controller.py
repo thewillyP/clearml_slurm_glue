@@ -3,6 +3,7 @@ import subprocess
 import time
 import boto3
 from clearml import Task, TaskTypes, Dataset
+from clearml.backend_api.session.client import APIClient
 
 HOSTNAME = subprocess.check_output("hostname", shell=True).decode().strip()
 
@@ -51,47 +52,47 @@ def build_singularity_command(task):
         bind_paths.extend(b.strip() for b in binds.split(","))
 
     bind_arg = f"--bind {','.join(bind_paths)}"
-    env_vars = (
-        "--env AWS_ACCESS_KEY_ID=${AWS_ACCESS_KEY_ID},"
-        "AWS_SECRET_ACCESS_KEY=${AWS_SECRET_ACCESS_KEY},"
-        "AWS_DEFAULT_REGION=${AWS_DEFAULT_REGION},"
-        "CLEARML_TASK_ID=${CLEARML_TASK_ID},"
-        "CLEARML_API_HOST=${CLEARML_API_HOST},"
-        "CLEARML_WEB_HOST=${CLEARML_WEB_HOST},"
-        "CLEARML_FILES_HOST=${CLEARML_FILES_HOST},"
-        "CLEARML_API_ACCESS_KEY=${CLEARML_API_ACCESS_KEY},"
-        "CLEARML_API_SECRET_KEY=${CLEARML_API_SECRET_KEY}"
+    env_args = (
+        "--env AWS_ACCESS_KEY_ID=$AWS_ACCESS_KEY_ID "
+        "--env AWS_SECRET_ACCESS_KEY=$AWS_SECRET_ACCESS_KEY "
+        "--env AWS_DEFAULT_REGION=$AWS_DEFAULT_REGION "
+        "--env CLEARML_TASK_ID=$CLEARML_TASK_ID "
+        "--env CLEARML_API_HOST=$CLEARML_API_HOST "
+        "--env CLEARML_WEB_HOST=$CLEARML_WEB_HOST "
+        "--env CLEARML_FILES_HOST=$CLEARML_FILES_HOST "
+        "--env CLEARML_API_ACCESS_KEY=$CLEARML_API_ACCESS_KEY "
+        "--env CLEARML_API_SECRET_KEY=$CLEARML_API_SECRET_KEY"
     )
 
     match container["type"]:
         case "docker":
             return (
-                f"singularity exec {use_nv} --containall --cleanenv {overlay_arg} {bind_arg} {env_vars} "
+                f"singularity exec {use_nv} --containall --cleanenv {overlay_arg} {bind_arg} {env_args} "
                 f"{container['docker_url']} bash $ENTRYPOINT_FILE"
             )
         case "sif":
             return (
-                f"singularity exec {use_nv} --containall --cleanenv {overlay_arg} {bind_arg} {env_vars} "
+                f"singularity exec {use_nv} --containall --cleanenv {overlay_arg} {bind_arg} {env_args} "
                 f"{container['sif_path']} bash $ENTRYPOINT_FILE"
             )
         case "artifact":
             fetch_cmd = (
                 "singularity exec --containall --cleanenv --bind $SLURM_TMPDIR "
-                "--env AWS_ACCESS_KEY_ID=${AWS_ACCESS_KEY_ID},"
-                "AWS_SECRET_ACCESS_KEY=${AWS_SECRET_ACCESS_KEY},"
-                "AWS_DEFAULT_REGION=${AWS_DEFAULT_REGION},"
-                "CLEARML_API_HOST=${CLEARML_API_HOST},"
-                "CLEARML_WEB_HOST=${CLEARML_WEB_HOST},"
-                "CLEARML_FILES_HOST=${CLEARML_FILES_HOST},"
-                "CLEARML_API_ACCESS_KEY=${CLEARML_API_ACCESS_KEY},"
-                "CLEARML_API_SECRET_KEY=${CLEARML_API_SECRET_KEY} "
+                "--env AWS_ACCESS_KEY_ID=$AWS_ACCESS_KEY_ID "
+                "--env AWS_SECRET_ACCESS_KEY=$AWS_SECRET_ACCESS_KEY "
+                "--env AWS_DEFAULT_REGION=$AWS_DEFAULT_REGION "
+                "--env CLEARML_API_HOST=$CLEARML_API_HOST "
+                "--env CLEARML_WEB_HOST=$CLEARML_WEB_HOST "
+                "--env CLEARML_FILES_HOST=$CLEARML_FILES_HOST "
+                "--env CLEARML_API_ACCESS_KEY=$CLEARML_API_ACCESS_KEY "
+                "--env CLEARML_API_SECRET_KEY=$CLEARML_API_SECRET_KEY "
                 "docker://thewillyp/clearml-agent "
-                f"clearml-data get --id {container['dataset_id']} --output-file $SLURM_TMPDIR/container.sif"
+                f"clearml-data get --id {container['dataset_id']} --copy $SLURM_TMPDIR/container_dir"
             )
 
             run_cmd = (
-                f"singularity exec {use_nv} --containall --cleanenv {overlay_arg} {bind_arg} {env_vars} "
-                f"$SLURM_TMPDIR/container.sif bash $ENTRYPOINT_FILE"
+                f"singularity exec {use_nv} --containall --cleanenv {overlay_arg} {bind_arg} {env_args} "
+                f"$(find $SLURM_TMPDIR/container_dir -name '*.sif' | head -1) bash $ENTRYPOINT_FILE"
             )
             return f"{fetch_cmd} && {run_cmd}"
         case "none":
@@ -134,7 +135,7 @@ curl -fsSL {entrypoint_url} -o $ENTRYPOINT_FILE
 curl -fsSL {entrypoint_url}.sig -o $SIG_FILE
 
 singularity run --cleanenv \
-  --env AWS_ACCESS_KEY_ID="${os.environ["AWS_ACCESS_KEY_ID"]}",AWS_SECRET_ACCESS_KEY="{os.environ["AWS_SECRET_ACCESS_KEY"]}",AWS_DEFAULT_REGION="{os.environ["AWS_DEFAULT_REGION"]}" \
+  --env AWS_ACCESS_KEY_ID="{os.environ["AWS_ACCESS_KEY_ID"]}",AWS_SECRET_ACCESS_KEY="{os.environ["AWS_SECRET_ACCESS_KEY"]}",AWS_DEFAULT_REGION="{os.environ["AWS_DEFAULT_REGION"]}" \
   docker://amazon/aws-cli \
   ssm get-parameter --name "/gpg/public-key" --with-decryption --query Parameter.Value --output text > $PUBKEY_FILE
 
@@ -149,6 +150,15 @@ def main(controller_task):
     queue_name = controller_task.get_parameter("slurm/queue_name", default="slurm")
     poll_interval = float(controller_task.get_parameter("slurm/poll_interval", default=0.5))
 
+    client = APIClient()
+
+    # Get queue ID by name
+    queues_response = client.queues.get_all(name=queue_name)
+    if not queues_response:
+        raise ValueError(f"Queue '{queue_name}' not found")
+    queue_id = queues_response[0].id
+    print(f"[INFO] Found queue '{queue_name}' with ID: {queue_id}")
+
     while True:
         try:
             max_jobs = int(controller_task.get_parameter("slurm/max_jobs", 1950))
@@ -160,13 +170,16 @@ def main(controller_task):
                 continue
 
             print(f"[INFO] Attempting to dequeue task from '{queue_name}'...")
-            task = Task.dequeue(queue_name=queue_name, wait_for_task=False)
-            if not task:
+            response = client.queues.get_next_task(queue=queue_id)
+
+            if not response.entry:
                 print("[INFO] No task available, sleeping...")
                 time.sleep(poll_interval)
                 continue
 
-            task_id = task.id
+            task_id = response.entry.task
+            task = Task.get_task(task_id=task_id)
+
             entry_url = task.get_parameter("slurm/entrypoint_url")
             log_dir = task.get_parameter("slurm/log_dir")
 
