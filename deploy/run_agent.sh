@@ -58,6 +58,7 @@ singularity exec --cleanenv --containall \\
     --env CLEARML_AGENT_FORCE_UV=1 \\
     --bind \${SLURM_TMPDIR}:/tmp \\
     --bind \${SLURM_TMPDIR}:\${HOME} \\
+    --bind \${HOME}/.ssh \\
     docker://thewillyp/clearml-agent \\
     clearml-agent daemon --queue infrastructure
 
