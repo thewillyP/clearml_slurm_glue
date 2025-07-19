@@ -107,7 +107,7 @@ def build_singularity_command(task, task_id):
             )
             return f"{fetch_cmd} && {run_cmd}"
         case _:
-            raise ValueError(f"Unknown container type: {container}")
+            raise ValueError(f"Unknown container type: {container['type']}")
 
 
 def create_sbatch_script(task, task_id, singularity_cmd, log_dir):
@@ -134,6 +134,12 @@ export CLEARML_WEB_HOST="{os.environ["CLEARML_WEB_HOST"]}"
 export CLEARML_FILES_HOST="{os.environ["CLEARML_FILES_HOST"]}"
 export CLEARML_API_ACCESS_KEY="{os.environ["CLEARML_API_ACCESS_KEY"]}"
 export CLEARML_API_SECRET_KEY="{os.environ["CLEARML_API_SECRET_KEY"]}"
+
+# Copy SSH directory to SLURM_TMPDIR
+mkdir -p ${{SLURM_TMPDIR}}/.ssh
+cp -r ${{HOME}}/.ssh/* ${{SLURM_TMPDIR}}/.ssh/
+chmod 700 ${{SLURM_TMPDIR}}/.ssh
+chmod 600 ${{SLURM_TMPDIR}}/.ssh/*
 
 {singularity_cmd}
 """
