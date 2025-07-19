@@ -19,6 +19,7 @@ RUN apt-get update \
     strace \
     gnupg \
     less \
+    openssh-client \
     && apt-get clean \
     && rm -rf /var/lib/apt/lists/*
 
