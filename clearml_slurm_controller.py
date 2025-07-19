@@ -150,6 +150,7 @@ gpg --no-default-keyring --keyring $GPG_KEYRING --verify $SIG_FILE $ENTRYPOINT_F
 def main(controller_task):
     queue_name = controller_task.get_parameter("slurm/queue_name", default="slurm")
     lazy_poll_interval = float(controller_task.get_parameter("slurm/lazy_poll_interval", default=5.0))
+    max_jobs = int(controller_task.get_parameter("slurm/max_jobs", default=1950))
 
     client = APIClient()
 
@@ -162,7 +163,6 @@ def main(controller_task):
 
     while True:
         try:
-            max_jobs = int(controller_task.get_parameter("slurm/max_jobs", 1950))
             current_jobs = get_running_slurm_jobs()
 
             if current_jobs >= max_jobs:
@@ -248,6 +248,11 @@ if __name__ == "__main__":
         task_name="SLURM Controller",
         task_type=TaskTypes.service,
     )
+
+    # Set parameters BEFORE execute_remotely so they can be modified in UI
+    controller_task.set_parameter("slurm/queue_name", "slurm")
+    controller_task.set_parameter("slurm/max_jobs", 1950)
+    controller_task.set_parameter("slurm/lazy_poll_interval", 5.0)
 
     controller_task.execute_remotely(queue_name="infrastructure", clone=False, exit_process=True)
     main(controller_task)
