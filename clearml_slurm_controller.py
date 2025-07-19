@@ -40,13 +40,11 @@ def resolve_container(task):
             task_name = task.get_parameter("slurm/container_source/task_name")
             dataset = Dataset.get(dataset_project=project, dataset_name=task_name)
             return {"type": "artifact", "dataset_id": dataset.id}
-        case "none":
-            return {"type": "none"}
         case _:
             raise ValueError(f"Invalid container_source/type: {source_type}")
 
 
-def build_singularity_command(task):
+def build_singularity_command(task, task_id):
     container = resolve_container(task)
     gpus = int(task.get_parameter("slurm/gpu", 0))
     use_nv = "--nv" if gpus > 0 else ""
@@ -75,16 +73,18 @@ def build_singularity_command(task):
         "--env CLEARML_API_SECRET_KEY=$CLEARML_API_SECRET_KEY"
     )
 
+    clearml_cmd = f"clearml-agent execute --id {task_id}"
+
     match container["type"]:
         case "docker":
             return (
                 f"singularity exec {use_nv} --containall --cleanenv {overlay_arg} {bind_arg} {env_args} "
-                f"{container['docker_url']} bash $ENTRYPOINT_FILE"
+                f"{container['docker_url']} {clearml_cmd}"
             )
         case "sif":
             return (
                 f"singularity exec {use_nv} --containall --cleanenv {overlay_arg} {bind_arg} {env_args} "
-                f"{container['sif_path']} bash $ENTRYPOINT_FILE"
+                f"{container['sif_path']} {clearml_cmd}"
             )
         case "artifact":
             fetch_cmd = (
@@ -103,16 +103,14 @@ def build_singularity_command(task):
 
             run_cmd = (
                 f"singularity exec {use_nv} --containall --cleanenv {overlay_arg} {bind_arg} {env_args} "
-                f"$(find $SLURM_TMPDIR/container_dir -name '*.sif' | head -1) bash $ENTRYPOINT_FILE"
+                f"$(find $SLURM_TMPDIR/container_dir -name '*.sif' | head -1) {clearml_cmd}"
             )
             return f"{fetch_cmd} && {run_cmd}"
-        case "none":
-            return "bash $ENTRYPOINT_FILE"
         case _:
             raise ValueError(f"Unknown container type: {container}")
 
 
-def create_sbatch_script(task, task_id, entrypoint_url, singularity_cmd, log_dir):
+def create_sbatch_script(task, task_id, singularity_cmd, log_dir):
     gpus = int(task.get_parameter("slurm/gpu", 0))
     gpu_directive = f"#SBATCH --gres=gpu:{gpus}" if gpus > 0 else ""
 
@@ -136,22 +134,6 @@ export CLEARML_WEB_HOST="{os.environ["CLEARML_WEB_HOST"]}"
 export CLEARML_FILES_HOST="{os.environ["CLEARML_FILES_HOST"]}"
 export CLEARML_API_ACCESS_KEY="{os.environ["CLEARML_API_ACCESS_KEY"]}"
 export CLEARML_API_SECRET_KEY="{os.environ["CLEARML_API_SECRET_KEY"]}"
-
-ENTRYPOINT_FILE="$SLURM_TMPDIR/entrypoint.sh"
-SIG_FILE="$SLURM_TMPDIR/entrypoint.sh.sig"
-PUBKEY_FILE="$SLURM_TMPDIR/public.key"
-GPG_KEYRING="$SLURM_TMPDIR/pubring.gpg"
-
-curl -fsSL {entrypoint_url} -o $ENTRYPOINT_FILE
-curl -fsSL {entrypoint_url}.sig -o $SIG_FILE
-
-singularity run --cleanenv \
-  --env AWS_ACCESS_KEY_ID="{os.environ["AWS_ACCESS_KEY_ID"]}",AWS_SECRET_ACCESS_KEY="{os.environ["AWS_SECRET_ACCESS_KEY"]}",AWS_DEFAULT_REGION="{os.environ["AWS_DEFAULT_REGION"]}" \
-  docker://amazon/aws-cli \
-  ssm get-parameter --name "/gpg/public-key" --with-decryption --query Parameter.Value --output text > $PUBKEY_FILE
-
-gpg --no-default-keyring --keyring $GPG_KEYRING --import $PUBKEY_FILE
-gpg --no-default-keyring --keyring $GPG_KEYRING --verify $SIG_FILE $ENTRYPOINT_FILE
 
 {singularity_cmd}
 """
@@ -210,11 +192,10 @@ def main(controller_task):
                 task_id = response.entry.task
                 task = Task.get_task(task_id=task_id)
 
-                entry_url = task.get_parameter("slurm/entrypoint_url")
                 log_dir = task.get_parameter("slurm/log_dir")
 
-                singularity_cmd = build_singularity_command(task)
-                sbatch_script = create_sbatch_script(task, task_id, entry_url, singularity_cmd, log_dir)
+                singularity_cmd = build_singularity_command(task, task_id)
+                sbatch_script = create_sbatch_script(task, task_id, singularity_cmd, log_dir)
 
                 print(f"[INFO] Submitting SLURM job for task {task_id}")
                 subprocess.run(
