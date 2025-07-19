@@ -19,6 +19,12 @@ sbatch <<EOF
 
 set -euo pipefail
 
+# Copy SSH directory to SLURM_TMPDIR
+mkdir -p \${SLURM_TMPDIR}/.ssh
+cp -r \${HOME}/.ssh/* \${SLURM_TMPDIR}/.ssh/
+chmod 700 \${SLURM_TMPDIR}/.ssh
+chmod 600 \${SLURM_TMPDIR}/.ssh/*
+
 # Get ClearML credentials from AWS Parameter Store
 CLEARML_API_ACCESS_KEY=\$(singularity run --cleanenv \\
     --env AWS_ACCESS_KEY_ID=${AWS_ACCESS_KEY_ID},AWS_SECRET_ACCESS_KEY=${AWS_SECRET_ACCESS_KEY},AWS_DEFAULT_REGION=us-east-1 \\
@@ -58,7 +64,6 @@ singularity exec --cleanenv --containall \\
     --env CLEARML_AGENT_FORCE_UV=1 \\
     --bind \${SLURM_TMPDIR}:/tmp \\
     --bind \${SLURM_TMPDIR}:\${HOME} \\
-    --bind \${HOME}/.ssh \\
     docker://thewillyp/clearml-agent \\
     clearml-agent daemon --queue infrastructure
 
