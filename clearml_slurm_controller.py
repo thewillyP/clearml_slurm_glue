@@ -87,8 +87,12 @@ def build_singularity_command(task, task_id):
                 f"{container['sif_path']} {clearml_cmd}"
             )
         case "artifact":
+            dataset_cache_path = f"$SLURM_TMPDIR/.clearml/cache/storage_manager/datasets/ds_{container['dataset_id']}"
+
             fetch_cmd = (
-                "singularity exec --containall --cleanenv --bind $SLURM_TMPDIR "
+                "singularity exec --containall --cleanenv "
+                "--bind $SLURM_TMPDIR:/tmp "
+                "--bind $SLURM_TMPDIR:$HOME "
                 "--env AWS_ACCESS_KEY_ID=$AWS_ACCESS_KEY_ID "
                 "--env AWS_SECRET_ACCESS_KEY=$AWS_SECRET_ACCESS_KEY "
                 "--env AWS_DEFAULT_REGION=$AWS_DEFAULT_REGION "
@@ -98,12 +102,12 @@ def build_singularity_command(task, task_id):
                 "--env CLEARML_API_ACCESS_KEY=$CLEARML_API_ACCESS_KEY "
                 "--env CLEARML_API_SECRET_KEY=$CLEARML_API_SECRET_KEY "
                 "docker://thewillyp/clearml-agent "
-                f"clearml-data get --id {container['dataset_id']} --copy $SLURM_TMPDIR/container_dir"
+                f"clearml-data get --id {container['dataset_id']}"
             )
 
             run_cmd = (
                 f"singularity exec {use_nv} --containall --cleanenv {overlay_arg} {bind_arg} {env_args} "
-                f"$(find $SLURM_TMPDIR/container_dir -name '*.sif' | head -1) {clearml_cmd}"
+                f"$(find {dataset_cache_path} -name '*.sif' | head -1) {clearml_cmd}"
             )
             return f"{fetch_cmd} && {run_cmd}"
         case _:
