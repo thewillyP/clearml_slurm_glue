@@ -20,8 +20,7 @@ def get_running_slurm_jobs():
                 "UserKnownHostsFile=/dev/null",
                 HOSTNAME,
                 f"squeue --noheader --user {username} | wc -l",
-            ],
-            shell=True,
+            ]
         )
         .decode()
         .strip()
