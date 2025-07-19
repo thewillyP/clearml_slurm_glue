@@ -121,8 +121,8 @@ def create_sbatch_script(task, task_id, singularity_cmd, log_dir):
 #SBATCH --mem={task.get_parameter("slurm/memory")}
 #SBATCH --time={task.get_parameter("slurm/time")}
 #SBATCH --cpus-per-task={task.get_parameter("slurm/cpu")}
-#SBATCH --output={log_dir}/run-{task_id}-%j.log
-#SBATCH --error={log_dir}/run-{task_id}-%j.err
+#SBATCH --output={log_dir}/run-%j-{task_id}.log
+#SBATCH --error={log_dir}/run-%j-{task_id}.err
 {gpu_directive}
 
 export CLEARML_TASK_ID={task_id}
