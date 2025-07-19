@@ -1,0 +1,218 @@
+import os
+import subprocess
+import time
+import boto3
+from clearml import Task, TaskTypes, Dataset
+
+HOSTNAME = subprocess.check_output("hostname", shell=True).decode().strip()
+
+
+def get_running_slurm_jobs():
+    return int(
+        subprocess.check_output(f"ssh {HOSTNAME} squeue --noheader --user {os.environ['USER']} | wc -l", shell=True)
+        .decode()
+        .strip()
+    )
+
+
+def resolve_container(task):
+    source_type = task.get_parameter("slurm/container_source/type", default="none")
+
+    match source_type:
+        case "docker_url":
+            return {"type": "docker", "docker_url": task.get_parameter("slurm/container_source/docker_url")}
+        case "sif_path":
+            return {"type": "sif", "sif_path": task.get_parameter("slurm/container_source/sif_path")}
+        case "artifact_task":
+            project = task.get_parameter("slurm/container_source/project")
+            task_name = task.get_parameter("slurm/container_source/task_name")
+            dataset = Dataset.get(dataset_project=project, dataset_name=task_name)
+            return {"type": "artifact", "dataset_id": dataset.id}
+        case "none":
+            return {"type": "none"}
+        case _:
+            raise ValueError(f"Invalid container_source/type: {source_type}")
+
+
+def build_singularity_command(task):
+    container = resolve_container(task)
+    gpus = int(task.get_parameter("slurm/gpu", 0))
+    use_nv = "--nv" if gpus > 0 else ""
+
+    bind_paths = ["${SLURM_TMPDIR}:/tmp"]
+    overlay = task.get_parameter("slurm/singularity_overlay", default="")
+    overlay_arg = f"--overlay {overlay}:rw" if overlay else ""
+
+    if not overlay:
+        bind_paths.append("${SLURM_TMPDIR}:${HOME}")
+
+    binds = task.get_parameter("slurm/singularity_binds", default="")
+    if binds:
+        bind_paths.extend(b.strip() for b in binds.split(","))
+
+    bind_arg = f"--bind {','.join(bind_paths)}"
+    env_vars = (
+        "--env AWS_ACCESS_KEY_ID=${AWS_ACCESS_KEY_ID},"
+        "AWS_SECRET_ACCESS_KEY=${AWS_SECRET_ACCESS_KEY},"
+        "AWS_DEFAULT_REGION=${AWS_DEFAULT_REGION},"
+        "CLEARML_TASK_ID=${CLEARML_TASK_ID},"
+        "CLEARML_API_HOST=${CLEARML_API_HOST},"
+        "CLEARML_WEB_HOST=${CLEARML_WEB_HOST},"
+        "CLEARML_FILES_HOST=${CLEARML_FILES_HOST},"
+        "CLEARML_API_ACCESS_KEY=${CLEARML_API_ACCESS_KEY},"
+        "CLEARML_API_SECRET_KEY=${CLEARML_API_SECRET_KEY}"
+    )
+
+    match container["type"]:
+        case "docker":
+            return (
+                f"singularity exec {use_nv} --containall --cleanenv {overlay_arg} {bind_arg} {env_vars} "
+                f"{container['docker_url']} bash $ENTRYPOINT_FILE"
+            )
+        case "sif":
+            return (
+                f"singularity exec {use_nv} --containall --cleanenv {overlay_arg} {bind_arg} {env_vars} "
+                f"{container['sif_path']} bash $ENTRYPOINT_FILE"
+            )
+        case "artifact":
+            fetch_cmd = (
+                "singularity exec --containall --cleanenv --bind $SLURM_TMPDIR "
+                "--env AWS_ACCESS_KEY_ID=${AWS_ACCESS_KEY_ID},"
+                "AWS_SECRET_ACCESS_KEY=${AWS_SECRET_ACCESS_KEY},"
+                "AWS_DEFAULT_REGION=${AWS_DEFAULT_REGION},"
+                "CLEARML_API_HOST=${CLEARML_API_HOST},"
+                "CLEARML_WEB_HOST=${CLEARML_WEB_HOST},"
+                "CLEARML_FILES_HOST=${CLEARML_FILES_HOST},"
+                "CLEARML_API_ACCESS_KEY=${CLEARML_API_ACCESS_KEY},"
+                "CLEARML_API_SECRET_KEY=${CLEARML_API_SECRET_KEY} "
+                "docker://thewillyp/clearml-agent "
+                f"clearml-data get --id {container['dataset_id']} --output-file $SLURM_TMPDIR/container.sif"
+            )
+
+            run_cmd = (
+                f"singularity exec {use_nv} --containall --cleanenv {overlay_arg} {bind_arg} {env_vars} "
+                f"$SLURM_TMPDIR/container.sif bash $ENTRYPOINT_FILE"
+            )
+            return f"{fetch_cmd} && {run_cmd}"
+        case "none":
+            return "bash $ENTRYPOINT_FILE"
+        case _:
+            raise ValueError(f"Unknown container type: {container}")
+
+
+def create_sbatch_script(task, task_id, entrypoint_url, singularity_cmd, log_dir):
+    gpus = int(task.get_parameter("slurm/gpu", 0))
+    gpu_directive = f"#SBATCH --gres=gpu:{gpus}" if gpus > 0 else ""
+
+    return f"""#!/bin/bash
+#SBATCH --job-name=clearml_{task.name[:8]}
+#SBATCH --nodes=1
+#SBATCH --ntasks=1
+#SBATCH --mem={task.get_parameter("slurm/memory")}
+#SBATCH --time={task.get_parameter("slurm/time")}
+#SBATCH --cpus-per-task={task.get_parameter("slurm/cpu")}
+#SBATCH --output={log_dir}/run-{task_id}-%j.log
+#SBATCH --error={log_dir}/run-{task_id}-%j.err
+{gpu_directive}
+
+export CLEARML_TASK_ID={task_id}
+export AWS_ACCESS_KEY_ID="{os.environ["AWS_ACCESS_KEY_ID"]}"
+export AWS_SECRET_ACCESS_KEY="{os.environ["AWS_SECRET_ACCESS_KEY"]}"
+export AWS_DEFAULT_REGION="{os.environ["AWS_DEFAULT_REGION"]}"
+export CLEARML_API_HOST="{os.environ["CLEARML_API_HOST"]}"
+export CLEARML_WEB_HOST="{os.environ["CLEARML_WEB_HOST"]}"
+export CLEARML_FILES_HOST="{os.environ["CLEARML_FILES_HOST"]}"
+export CLEARML_API_ACCESS_KEY="{os.environ["CLEARML_API_ACCESS_KEY"]}"
+export CLEARML_API_SECRET_KEY="{os.environ["CLEARML_API_SECRET_KEY"]}"
+
+ENTRYPOINT_FILE="$SLURM_TMPDIR/entrypoint.sh"
+SIG_FILE="$SLURM_TMPDIR/entrypoint.sh.sig"
+PUBKEY_FILE="$SLURM_TMPDIR/public.key"
+GPG_KEYRING="$SLURM_TMPDIR/pubring.gpg"
+
+curl -fsSL {entrypoint_url} -o $ENTRYPOINT_FILE
+curl -fsSL {entrypoint_url}.sig -o $SIG_FILE
+
+singularity run --cleanenv \
+  --env AWS_ACCESS_KEY_ID="${os.environ["AWS_ACCESS_KEY_ID"]}",AWS_SECRET_ACCESS_KEY="{os.environ["AWS_SECRET_ACCESS_KEY"]}",AWS_DEFAULT_REGION="{os.environ["AWS_DEFAULT_REGION"]}" \
+  docker://amazon/aws-cli \
+  ssm get-parameter --name "/gpg/public-key" --with-decryption --query Parameter.Value --output text > $PUBKEY_FILE
+
+gpg --no-default-keyring --keyring $GPG_KEYRING --import $PUBKEY_FILE
+gpg --no-default-keyring --keyring $GPG_KEYRING --verify $SIG_FILE $ENTRYPOINT_FILE
+
+{singularity_cmd}
+"""
+
+
+def main(controller_task):
+    queue_name = controller_task.get_parameter("slurm/queue_name", default="slurm")
+    poll_interval = float(controller_task.get_parameter("slurm/poll_interval", default=0.5))
+
+    while True:
+        try:
+            max_jobs = int(controller_task.get_parameter("slurm/max_jobs", 1950))
+            current_jobs = get_running_slurm_jobs()
+
+            if current_jobs >= max_jobs:
+                print(f"[INFO] Max jobs ({max_jobs}) reached, sleeping...")
+                time.sleep(poll_interval)
+                continue
+
+            print(f"[INFO] Attempting to dequeue task from '{queue_name}'...")
+            task = Task.dequeue(queue_name=queue_name, wait_for_task=False)
+            if not task:
+                print("[INFO] No task available, sleeping...")
+                time.sleep(poll_interval)
+                continue
+
+            task_id = task.id
+            entry_url = task.get_parameter("slurm/entrypoint_url")
+            log_dir = task.get_parameter("slurm/log_dir")
+
+            singularity_cmd = build_singularity_command(task)
+            sbatch_script = create_sbatch_script(task, task_id, entry_url, singularity_cmd, log_dir)
+
+            print(f"[INFO] Submitting SLURM job for task {task_id}")
+            subprocess.run(["ssh", HOSTNAME, "sbatch"], input=sbatch_script, text=True)
+
+        except Exception as e:
+            print(f"[ERROR] {e}")
+        time.sleep(poll_interval)
+
+
+if __name__ == "__main__":
+    ssm = boto3.client("ssm")
+
+    clearml_api_host = ssm.get_parameter(Name="/dev/research/clearml_api_host")["Parameter"]["Value"]
+    clearml_web_host = ssm.get_parameter(Name="/dev/research/clearml_web_host")["Parameter"]["Value"]
+    clearml_files_host = ssm.get_parameter(Name="/dev/research/clearml_files_host")["Parameter"]["Value"]
+    clearml_access_key = ssm.get_parameter(Name="/dev/research/clearml_api_access_key", WithDecryption=True)[
+        "Parameter"
+    ]["Value"]
+    clearml_secret_key = ssm.get_parameter(Name="/dev/research/clearml_api_secret_key", WithDecryption=True)[
+        "Parameter"
+    ]["Value"]
+
+    os.environ["CLEARML_API_HOST"] = clearml_api_host
+    os.environ["CLEARML_WEB_HOST"] = clearml_web_host
+    os.environ["CLEARML_FILES_HOST"] = clearml_files_host
+    os.environ["CLEARML_API_ACCESS_KEY"] = clearml_access_key
+    os.environ["CLEARML_API_SECRET_KEY"] = clearml_secret_key
+
+    Task.set_credentials(
+        api_host=clearml_api_host,
+        web_host=clearml_web_host,
+        files_host=clearml_files_host,
+        key=clearml_access_key,
+        secret=clearml_secret_key,
+    )
+
+    controller_task = Task.init(
+        project_name="slurm_glue",
+        task_name="SLURM Controller",
+        task_type=TaskTypes.service,
+    )
+
+    controller_task.execute_remotely(queue_name="infrastructure", clone=False, exit_process=True)
+    main(controller_task)
