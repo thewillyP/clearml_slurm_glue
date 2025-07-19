@@ -37,8 +37,8 @@ def resolve_container(task):
             return {"type": "sif", "sif_path": task.get_parameter("slurm/container_source/sif_path")}
         case "artifact_task":
             project = task.get_parameter("slurm/container_source/project")
-            task_name = task.get_parameter("slurm/container_source/task_name")
-            dataset = Dataset.get(dataset_project=project, dataset_name=task_name)
+            dataset_name = task.get_parameter("slurm/container_source/dataset_name")
+            dataset = Dataset.get(dataset_project=project, dataset_name=dataset_name)
             return {"type": "artifact", "dataset_id": dataset.id}
         case _:
             raise ValueError(f"Invalid container_source/type: {source_type}")
