@@ -9,8 +9,9 @@ HOSTNAME = subprocess.check_output("hostname", shell=True).decode().strip()
 
 
 def get_running_slurm_jobs():
+    username = subprocess.check_output("whoami", shell=True).decode().strip()
     return int(
-        subprocess.check_output(f"ssh {HOSTNAME} squeue --noheader --user {os.environ['USER']} | wc -l", shell=True)
+        subprocess.check_output(f"ssh {HOSTNAME} squeue --noheader --user {username} | wc -l", shell=True)
         .decode()
         .strip()
     )
