@@ -115,7 +115,7 @@ def create_sbatch_script(task, task_id, singularity_cmd, log_dir):
     gpu_directive = f"#SBATCH --gres=gpu:{gpus}" if gpus > 0 else ""
 
     return f"""#!/bin/bash
-#SBATCH --job-name=clearml_{task.name[:8]}
+#SBATCH --job-name=clearml_task
 #SBATCH --nodes=1
 #SBATCH --ntasks=1
 #SBATCH --mem={task.get_parameter("slurm/memory")}
