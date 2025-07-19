@@ -11,7 +11,18 @@ HOSTNAME = subprocess.check_output("hostname", shell=True).decode().strip()
 def get_running_slurm_jobs():
     username = subprocess.check_output("whoami", shell=True).decode().strip()
     return int(
-        subprocess.check_output(f"ssh {HOSTNAME} squeue --noheader --user {username} | wc -l", shell=True)
+        subprocess.check_output(
+            [
+                "ssh",
+                "-o",
+                "StrictHostKeyChecking=no",
+                "-o",
+                "UserKnownHostsFile=/dev/null",
+                HOSTNAME,
+                f"squeue --noheader --user {username} | wc -l",
+            ],
+            shell=True,
+        )
         .decode()
         .strip()
     )
@@ -207,7 +218,11 @@ def main(controller_task):
                 sbatch_script = create_sbatch_script(task, task_id, entry_url, singularity_cmd, log_dir)
 
                 print(f"[INFO] Submitting SLURM job for task {task_id}")
-                subprocess.run(["ssh", HOSTNAME, "sbatch"], input=sbatch_script, text=True)
+                subprocess.run(
+                    ["ssh", "-o", "StrictHostKeyChecking=no", "-o", "UserKnownHostsFile=/dev/null", HOSTNAME, "sbatch"],
+                    input=sbatch_script,
+                    text=True,
+                )
 
                 tasks_processed += 1
 
