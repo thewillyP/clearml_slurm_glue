@@ -5,7 +5,7 @@ import boto3
 from clearml import Task, TaskTypes, Dataset
 
 
-def build_and_save_container(docker_url, output_name):
+def build_and_save_container(docker_url, tmp_dir, output_name):
     """Build singularity container from docker image and save as dataset"""
 
     # Get hostname for SSH
@@ -19,10 +19,8 @@ def build_and_save_container(docker_url, output_name):
         print(f"[INFO] Building singularity container from {docker_url}")
 
         # Build the singularity container via SSH - build to tmp, cat, then remove
-        remote_tmp_path = "/tmp/container_build.sif"
-        build_cmd = (
-            f"singularity build -F {remote_tmp_path} {docker_url} && cat {remote_tmp_path} && rm {remote_tmp_path}"
-        )
+        remote_tmp_path = f"{tmp_dir}/container_build.sif"
+        build_cmd = f"singularity build --tmpdir {tmp_dir} -F {remote_tmp_path} {docker_url} && cat {remote_tmp_path} && rm {remote_tmp_path}"
         ssh_cmd = ["ssh", "-o", "StrictHostKeyChecking=no", "-o", "UserKnownHostsFile=/dev/null", hostname, build_cmd]
 
         print(f"[INFO] Running command: ssh {hostname} '{build_cmd}' > {sif_path}")
@@ -86,9 +84,11 @@ def main():
 
     # Get container configuration
     docker_url = task.get_parameter("container/docker_url")
+    tmp_dir = task.get_parameter("container/tmp_dir")
 
     print(f"[INFO] Starting container build task")
     print(f"[INFO] Docker URL: {docker_url}")
+    print(f"[INFO] Temp directory: {tmp_dir}")
 
     # Generate output name from docker URL
     output_name = generate_container_name(docker_url)
@@ -96,7 +96,7 @@ def main():
 
     try:
         # Build and save container
-        dataset_id = build_and_save_container(docker_url, output_name)
+        dataset_id = build_and_save_container(docker_url, tmp_dir, output_name)
 
         # Log success
         task.get_logger().report_text(
@@ -147,12 +147,12 @@ if __name__ == "__main__":
     )
 
     # Create editable parameters
-    container_params = {"docker_url": "docker://thewillyp/devenv:cpu"}
+    container_params = {"docker_url": "docker://thewillyp/devenv:cpu", "tmp_dir": "/scratch/wlp9800/"}
     container_params = task.connect(container_params, name="container")
 
     slurm_params = {
-        "memory": "8GB",
-        "time": "00:30:00",
+        "memory": "10GB",
+        "time": "00:45:00",
         "cpu": 4,
         "gpu": 0,
         "log_dir": "/vast/wlp9800/logs",
