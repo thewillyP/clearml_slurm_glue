@@ -4,18 +4,6 @@ RUN_TIME=$1
 RUN_CPUS=$2
 RUN_MEM=$3
 LOG_DIR=$4
-SCRATCH_DIR=$5
-FORCE_REBUILD=${6:-false}
-
-IMAGE_PATH="${SCRATCH_DIR}/clearml_agent.sif"
-
-# Check if we should build the image
-if [ "$FORCE_REBUILD" = "true" ] || [ ! -f "${IMAGE_PATH}" ]; then
-    echo "Force rebuild requested. Building image..."
-    singularity build --force "${IMAGE_PATH}" docker://thewillyp/clearml-agent
-else
-    echo "Image found at ${IMAGE_PATH}. Skipping build."
-fi
 
 # Submit the SLURM job
 sbatch <<EOF
@@ -70,7 +58,7 @@ singularity exec --cleanenv --containall \\
     --env CLEARML_AGENT_FORCE_UV=1 \\
     --bind \${SLURM_TMPDIR}:/tmp \\
     --bind \${SLURM_TMPDIR}:\${HOME} \\
-    ${IMAGE_PATH} \\
+    docker://thewillyp/clearml-agent \\
     clearml-agent daemon --queue infrastructure
 
 EOF
