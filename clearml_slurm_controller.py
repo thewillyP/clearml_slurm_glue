@@ -158,9 +158,9 @@ gpg --no-default-keyring --keyring $GPG_KEYRING --verify $SIG_FILE $ENTRYPOINT_F
 
 
 def main(controller_task):
-    queue_name = controller_task.get_parameter("slurm/queue_name", default="slurm")
-    lazy_poll_interval = float(controller_task.get_parameter("slurm/lazy_poll_interval", default=5.0))
-    max_jobs = int(controller_task.get_parameter("slurm/max_jobs", default=1950))
+    queue_name = controller_task.get_parameter("slurm/queue_name")
+    lazy_poll_interval = float(controller_task.get_parameter("slurm/lazy_poll_interval"))
+    max_jobs = int(controller_task.get_parameter("slurm/max_jobs"))
 
     client = APIClient()
 
