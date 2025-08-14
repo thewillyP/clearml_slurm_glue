@@ -9,7 +9,7 @@ from clearml.backend_api.session.client import APIClient
 
 def load_private_key(ssh_private_key):
     """Try to load private key, attempting different key types"""
-    key_types = [paramiko.RSAKey, paramiko.Ed25519Key, paramiko.ECDSAKey, paramiko.DSSKey]
+    key_types = [paramiko.RSAKey, paramiko.Ed25519Key, paramiko.ECDSAKey]
 
     for key_type in key_types:
         try:
