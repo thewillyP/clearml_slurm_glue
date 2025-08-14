@@ -1,0 +1,48 @@
+properties([])
+
+pipeline {
+    agent any
+
+    stages {
+        stage('Checkout Scripts') {
+            steps {
+                checkout([
+                    $class: 'GitSCM',
+                    branches: [[name: '*/main']],
+                    userRemoteConfigs: [[url: 'https://github.com/thewillyp/clearml_slurm_glue.git']]
+                ])
+            }
+        }
+
+        stage('Run Agent') {
+            steps {
+                withCredentials([[
+                    $class: 'AmazonWebServicesCredentialsBinding',
+                    credentialsId: 'aws-credentials',
+                    accessKeyVariable: 'AWS_ACCESS_KEY_ID',
+                    secretKeyVariable: 'AWS_SECRET_ACCESS_KEY'
+                ]]) {
+                    script {
+                        sh """
+                            export AWS_ACCESS_KEY_ID="${AWS_ACCESS_KEY_ID}"
+                            export AWS_SECRET_ACCESS_KEY="${AWS_SECRET_ACCESS_KEY}"
+                            bash deploy_local/run_agent.sh
+                        """
+                    }
+                }
+            }
+        }
+    }
+
+    post {
+        success {
+            echo 'ClearML Docker agent started successfully!'
+        }
+        failure {
+            echo 'Failed to start ClearML Docker agent.'
+        }
+        always {
+            echo 'Pipeline completed.'
+        }
+    }
+}

@@ -5,10 +5,8 @@ import boto3
 from clearml import Task, TaskTypes, Dataset
 from clearml.backend_api.session.client import APIClient
 
-HOSTNAME = subprocess.check_output("hostname", shell=True).decode().strip()
 
-
-def get_running_slurm_jobs():
+def get_running_slurm_jobs(slurm_host):
     username = subprocess.check_output("whoami", shell=True).decode().strip()
     return int(
         subprocess.check_output(
@@ -18,7 +16,7 @@ def get_running_slurm_jobs():
                 "StrictHostKeyChecking=no",
                 "-o",
                 "UserKnownHostsFile=/dev/null",
-                HOSTNAME,
+                slurm_host,
                 f"squeue --noheader --user {username} | wc -l",
             ]
         )
@@ -153,6 +151,7 @@ def main(controller_task):
     queue_name = controller_task.get_parameter("slurm/queue_name")
     lazy_poll_interval = float(controller_task.get_parameter("slurm/lazy_poll_interval"))
     max_jobs = int(controller_task.get_parameter("slurm/max_jobs"))
+    slurm_host = controller_task.get_parameter("slurm/slurm_host")
 
     client = APIClient()
 
@@ -165,7 +164,7 @@ def main(controller_task):
 
     while True:
         try:
-            current_jobs = get_running_slurm_jobs()
+            current_jobs = get_running_slurm_jobs(slurm_host)
 
             if current_jobs >= max_jobs:
                 print(f"[INFO] Max jobs ({max_jobs}) reached, sleeping...")
@@ -187,7 +186,7 @@ def main(controller_task):
             tasks_processed = 0
             while tasks_processed < num_entries:
                 # Check job limit again
-                current_jobs = get_running_slurm_jobs()
+                current_jobs = get_running_slurm_jobs(slurm_host)
                 if current_jobs >= max_jobs:
                     print(f"[INFO] Hit max jobs limit during burst, processed {tasks_processed}/{num_entries}")
                     break
@@ -209,7 +208,15 @@ def main(controller_task):
 
                 print(f"[INFO] Submitting SLURM job for task {task_id}")
                 subprocess.run(
-                    ["ssh", "-o", "StrictHostKeyChecking=no", "-o", "UserKnownHostsFile=/dev/null", HOSTNAME, "sbatch"],
+                    [
+                        "ssh",
+                        "-o",
+                        "StrictHostKeyChecking=no",
+                        "-o",
+                        "UserKnownHostsFile=/dev/null",
+                        slurm_host,
+                        "sbatch",
+                    ],
                     input=sbatch_script,
                     text=True,
                 )
@@ -255,7 +262,12 @@ if __name__ == "__main__":
     )
 
     # Create parameters dict and connect it to task
-    params = {"queue_name": "slurm", "max_jobs": 1950, "lazy_poll_interval": 5.0}
+    params = {
+        "queue_name": "slurm",
+        "max_jobs": 1950,
+        "lazy_poll_interval": 30.0,
+        "slurm_host": "greene",
+    }
     params = controller_task.connect(params, name="slurm")
 
     controller_task.execute_remotely(queue_name="infrastructure", clone=False, exit_process=True)
