@@ -1,28 +1,37 @@
-import os
-import subprocess
-import time
 import boto3
+import paramiko
+import io
+import os
+import time
 from clearml import Task, TaskTypes, Dataset
 from clearml.backend_api.session.client import APIClient
 
 
-def get_running_slurm_jobs(slurm_host):
-    username = subprocess.check_output("whoami", shell=True).decode().strip()
-    return int(
-        subprocess.check_output(
-            [
-                "ssh",
-                "-o",
-                "StrictHostKeyChecking=no",
-                "-o",
-                "UserKnownHostsFile=/dev/null",
-                slurm_host,
-                f"squeue --noheader --user {username} | wc -l",
-            ]
-        )
-        .decode()
-        .strip()
-    )
+def load_private_key(ssh_private_key):
+    """Try to load private key, attempting different key types"""
+    key_types = [paramiko.RSAKey, paramiko.Ed25519Key, paramiko.ECDSAKey, paramiko.DSSKey]
+
+    for key_type in key_types:
+        try:
+            return key_type.from_private_key(io.StringIO(ssh_private_key))
+        except Exception:
+            continue
+
+    raise ValueError("Unable to load private key - unsupported key type or invalid format")
+
+
+def get_running_slurm_jobs(slurm_host, ssh_username, ssh_private_key):
+    ssh = paramiko.SSHClient()
+    ssh.set_missing_host_key_policy(paramiko.AutoAddPolicy())
+
+    private_key = load_private_key(ssh_private_key)
+    ssh.connect(hostname=slurm_host, username=ssh_username, pkey=private_key)
+
+    stdin, stdout, stderr = ssh.exec_command(f"squeue --noheader --user {ssh_username} | wc -l")
+    result = int(stdout.read().decode().strip())
+
+    ssh.close()
+    return result
 
 
 def resolve_container(task):
@@ -147,11 +156,38 @@ chmod 600 ${{SLURM_TMPDIR}}/.ssh/*
 """
 
 
+def submit_slurm_job(slurm_host, ssh_username, ssh_private_key, sbatch_script):
+    ssh = paramiko.SSHClient()
+    ssh.set_missing_host_key_policy(paramiko.AutoAddPolicy())
+
+    private_key = load_private_key(ssh_private_key)
+    ssh.connect(hostname=slurm_host, username=ssh_username, pkey=private_key)
+
+    stdin, stdout, stderr = ssh.exec_command("sbatch")
+    stdin.write(sbatch_script)
+    stdin.channel.shutdown_write()
+
+    result = stdout.read().decode()
+    error = stderr.read().decode()
+
+    ssh.close()
+
+    if error:
+        print(f"[ERROR] sbatch stderr: {error}")
+    return result
+
+
 def main(controller_task):
     queue_name = controller_task.get_parameter("slurm/queue_name")
     lazy_poll_interval = float(controller_task.get_parameter("slurm/lazy_poll_interval"))
     max_jobs = int(controller_task.get_parameter("slurm/max_jobs"))
     slurm_host = controller_task.get_parameter("slurm/slurm_host")
+    ssh_username = controller_task.get_parameter("slurm/ssh_username")
+
+    # Get SSH key from AWS Parameter Store
+    ssm = boto3.client("ssm")
+    slurm_host_key_param = controller_task.get_parameter("slurm/slurm_host_key")
+    ssh_private_key = ssm.get_parameter(Name=slurm_host_key_param, WithDecryption=True)["Parameter"]["Value"]
 
     client = APIClient()
 
@@ -164,7 +200,7 @@ def main(controller_task):
 
     while True:
         try:
-            current_jobs = get_running_slurm_jobs(slurm_host)
+            current_jobs = get_running_slurm_jobs(slurm_host, ssh_username, ssh_private_key)
 
             if current_jobs >= max_jobs:
                 print(f"[INFO] Max jobs ({max_jobs}) reached, sleeping...")
@@ -186,7 +222,7 @@ def main(controller_task):
             tasks_processed = 0
             while tasks_processed < num_entries:
                 # Check job limit again
-                current_jobs = get_running_slurm_jobs(slurm_host)
+                current_jobs = get_running_slurm_jobs(slurm_host, ssh_username, ssh_private_key)
                 if current_jobs >= max_jobs:
                     print(f"[INFO] Hit max jobs limit during burst, processed {tasks_processed}/{num_entries}")
                     break
@@ -207,19 +243,7 @@ def main(controller_task):
                 sbatch_script = create_sbatch_script(task, task_id, singularity_cmd, log_dir)
 
                 print(f"[INFO] Submitting SLURM job for task {task_id}")
-                subprocess.run(
-                    [
-                        "ssh",
-                        "-o",
-                        "StrictHostKeyChecking=no",
-                        "-o",
-                        "UserKnownHostsFile=/dev/null",
-                        slurm_host,
-                        "sbatch",
-                    ],
-                    input=sbatch_script,
-                    text=True,
-                )
+                submit_slurm_job(slurm_host, ssh_username, ssh_private_key, sbatch_script)
 
                 tasks_processed += 1
 
@@ -266,7 +290,9 @@ if __name__ == "__main__":
         "queue_name": "slurm",
         "max_jobs": 1950,
         "lazy_poll_interval": 30.0,
-        "slurm_host": "greene",
+        "slurm_host": "greene.hpc.nyu.edu",
+        "slurm_host_key": "/dev/general/ssh/wlp9800",
+        "ssh_username": "wlp9800",
     }
     params = controller_task.connect(params, name="slurm")
 

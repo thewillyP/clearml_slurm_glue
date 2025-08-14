@@ -40,7 +40,6 @@ CLEARML_WEB_HOST=$(docker run --rm \
 # Run ClearML agent with Docker
 docker run -d \
  --name clearml_agent_$(date +%s) \
- --user $(id -u):$(id -g) \
  -e AWS_ACCESS_KEY_ID=${AWS_ACCESS_KEY_ID} \
  -e AWS_SECRET_ACCESS_KEY=${AWS_SECRET_ACCESS_KEY} \
  -e AWS_DEFAULT_REGION=us-east-1 \
@@ -50,7 +49,5 @@ docker run -d \
  -e CLEARML_API_ACCESS_KEY=${CLEARML_API_ACCESS_KEY} \
  -e CLEARML_API_SECRET_KEY=${CLEARML_API_SECRET_KEY} \
  -e CLEARML_AGENT_FORCE_UV=1 \
- -v ${HOME}/.ssh:/home/user/.ssh:ro \
- -e HOME=/home/user \
  thewillyp/clearml-agent \
  clearml-agent daemon --queue infrastructure
