@@ -80,6 +80,10 @@ def build_singularity_command(task, task_id):
         "--env CLEARML_API_SECRET_KEY=$CLEARML_API_SECRET_KEY"
     )
 
+    # Add CUDA_VERSION=12.9 if only CPUs are used
+    if gpus == 0:
+        env_args += " --env CUDA_VERSION=12.9"
+
     clearml_cmd = f"clearml-agent execute --id {task_id}"
 
     match container["type"]:
